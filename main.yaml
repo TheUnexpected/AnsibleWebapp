@@ -1,0 +1,183 @@
+---
+- name: playansible
+  hosts: localhost
+  gather_facts: False
+  connection: local
+
+  tasks:
+    - name: create the Namespace
+      k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Namespace
+          metadata:
+            name: jmoncada
+            labels:
+              tipo: "crud"
+
+    - name: create pv
+      k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: PersistentVolume
+          metadata:
+            namespace: jmoncada
+            name: volumenes
+            labels:
+              tipo: "crud"
+          spec:
+            storageClassName: local-storage
+            capacity:
+              storage: 5Gi 
+            accessModes:
+              - ReadWriteOnce
+            hostPath:
+              path: "/mnt/data" 
+
+    - name: create pvc
+      k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: PersistentVolumeClaim
+          metadata:
+            namespace: jmoncada
+            name: pvc
+            labels:
+              tipo: "crud"
+          spec:
+            storageClassName: local-storage
+            accessModes:
+              - ReadWriteOnce
+            resources:
+              requests:
+                storage: 5Gi 
+
+    - name: create a deployment for DB
+      k8s:
+        state: present
+        definition:
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            namespace: jmoncada
+            name: deploy-db
+            labels:
+              tipo: "crud"
+          spec:
+            selector:
+              matchLabels:
+                app: deploy-db
+            template:
+              metadata:
+                labels:
+                  app: deploy-db
+              spec:
+                containers:
+                - name: personalsql
+                  image: moncadeishon/personalsql:latest
+                  ports:
+                  - containerPort: 3306
+                  volumeMounts:
+                  - mountPath: /var/lib/mysql
+                    name: local-storage
+                volumes:
+                 - name: local-storage
+                   persistentVolumeClaim:
+                     claimName: pvc
+
+    - name: create a deployment for Root
+      k8s:
+        state: present
+        definition:
+          apiVersion: apps/v1 
+          kind: Deployment
+          metadata:
+            name: crud
+            namespace: jmoncada
+            labels: 
+              tipo: "crud"
+          spec:
+            selector: 
+              matchLabels:
+                app: crud
+            replicas: 7 
+            template: 
+              metadata:
+                labels:
+                  app: crud
+              spec:
+                containers:
+                - name: personalcrud
+                  image: moncadeishon/personalcrud:latest
+                  ports: 
+                  - containerPort: 80
+
+    - name: create a Service for DB.
+      k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: jmoncada
+            name: sql-service
+            labels:
+              app: deploy-db
+          spec:
+            ports:
+            - port: 3306
+              targetPort: 3306
+              protocol: TCP
+            selector:
+              app: deploy-db
+
+    - name: create a Servicec for Root.
+      k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: jmoncada
+            name: crud-service
+            labels:
+              app: crud
+          spec:
+            type: NodePort
+            ports:
+            - port: 80
+              targetPort: 80
+              nodePort: 30002
+              protocol: TCP
+            selector:
+              app: crud 
+
+    - name: create url.
+      k8s:
+        state: present
+        definition:
+          apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: jmoncada
+            name: url
+            annotations:
+              nginx.ingress.kubernetes.io/rewrite-target: /
+          spec:
+            rules: 
+            - host: app.jmoncada.com
+              http:
+                paths:
+                - path: /
+                  pathType: Prefix
+                  backend:
+                    service:
+                      name: crud-service
+                      port:
+                        number: 80
+
+
+
